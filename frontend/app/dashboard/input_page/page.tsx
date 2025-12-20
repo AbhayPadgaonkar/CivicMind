@@ -16,45 +16,24 @@ import {
   FileText,
   AlertCircle
 } from "lucide-react";
-import { useAuth } from "@/lib/useAuth";
-import { useRouter } from "next/navigation";
-
 
 export default function InputPage() {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-
-  // 🔧 ALL STATE HOOKS (no conditions)
   const [isFetching, setIsFetching] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
-  const [fetchedEmails, setFetchedEmails] = useState<any[]>([]);
-  const [loginTime, setLoginTime] = useState("");
+  const [fetchedEmails, setFetchedEmails] = useState<any[]>([]); 
+  const [loginTime, setLoginTime] = useState<string>(""); 
+
+  // --- MANUAL UPLOAD STATE ---
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ✅ EFFECT 1: auth guard
-  useEffect(() => {
-    if (!loading && !user) {
-      router.replace("/login");
-    }
-  }, [user, loading, router]);
-
-  // ✅ EFFECT 2: client-only time
+  // Fix Hydration Error by setting time only on client mount
   useEffect(() => {
     setLoginTime(new Date().toLocaleTimeString());
+    // Optional: Clear old data on page load so we start fresh
+    // localStorage.removeItem("dashboardData"); 
   }, []);
-
-  // 🚫 RETURNS ONLY AFTER ALL HOOKS
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-white">
-        Initializing secure session…
-      </div>
-    );
-  }
-
-  if (!user) return null;
   
   // --- EXISTING GMAIL FETCH ---
   const handleFetchComplaints = async () => {
