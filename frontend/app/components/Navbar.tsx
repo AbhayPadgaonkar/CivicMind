@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -63,7 +62,6 @@ export default function Navbar() {
   return (
     <nav className="fixed top-0 w-full z-50 border-b border-white/5 bg-[#020617]/60 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-
         {/* --- LOGO --- */}
         <Link href="/" className="flex items-center gap-3 group">
           <div className="w-10 h-10 bg-gradient-to-tr from-purple-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/20 group-hover:shadow-purple-500/40 transition-shadow">
@@ -77,7 +75,6 @@ export default function Navbar() {
         {/* --- RIGHT SIDE --- */}
         {!loading && (
           <div className="flex items-center gap-4">
-
             {/* 🔓 NOT AUTHENTICATED */}
             {!user && (
               <>
@@ -102,10 +99,11 @@ export default function Navbar() {
             {/* 🔐 AUTHENTICATED */}
             {user && profile && (
               <>
-                <Button variant="ghost" className="text-white">
-                  Complaints <Logs className="ml-2 w-4 h-4" />
-                </Button>
-
+                <Link href="/dashboard/complaintpage">
+                  <Button variant="ghost" className="text-white">
+                    Complaints <Logs className="ml-2 w-4 h-4" />
+                  </Button>
+                </Link>
                 <Button variant="ghost" className="text-white">
                   Notifications <Bell className="ml-2 w-4 h-4" />
                 </Button>
@@ -145,4 +143,3 @@ export default function Navbar() {
     </nav>
   );
 }
-

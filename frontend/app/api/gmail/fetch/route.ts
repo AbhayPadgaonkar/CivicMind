@@ -2,11 +2,20 @@ import { google } from "googleapis";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { COMPLAINT_KEYWORDS } from "./keywords";
+import { db } from "@/lib/firebaseAdmin";
 
 function containsComplaintKeyword(text: string) {
-  return COMPLAINT_KEYWORDS.some((keyword) =>
-    text.includes(keyword)
-  );
+  return COMPLAINT_KEYWORDS.some((keyword) => text.includes(keyword));
+}
+
+async function isAlreadyProcessed(messageId: string) {
+  const snap = await db
+    .collection("complaints")
+    .where("gmailMessageId", "==", messageId)
+    .limit(1)
+    .get();
+
+  return !snap.empty;
 }
 
 export async function GET() {
@@ -46,6 +55,10 @@ export async function GET() {
     logs.push(`> Scanning ${messages.length} filtered inbox emails...`);
 
     for (const msg of messages) {
+      if (await isAlreadyProcessed(msg.id!)) {
+        logs.push(`> Skipped already processed email: ${msg.id}`);
+        continue;
+      }
       const details = await gmail.users.messages.get({
         userId: "me",
         id: msg.id!,
@@ -56,8 +69,7 @@ export async function GET() {
       const headers = payload?.headers || [];
       const subject =
         headers.find((h) => h.name === "Subject")?.value || "No Subject";
-      const from =
-        headers.find((h) => h.name === "From")?.value || "Unknown";
+      const from = headers.find((h) => h.name === "From")?.value || "Unknown";
       const date =
         headers.find((h) => h.name === "Date")?.value ||
         new Date().toISOString();

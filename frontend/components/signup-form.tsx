@@ -55,7 +55,7 @@ export function SignupForm({
         email,
         password
       );
-      router.push("/dashboard/input_page");
+      router.push("/dashboard/resultpage");
     } catch (err: any) {
       console.error(err);
       alert(err.message || "Signup failed");
