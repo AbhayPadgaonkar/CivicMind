@@ -1,290 +1,6 @@
-'''from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
-import numpy as np
-import joblib
-import tempfile
-import os
-import re
-from datetime import datetime
-import xgboost as xgb
-
-import fitz
-from docx import Document
-import spacy
-from sentence_transformers import SentenceTransformer
-
-# ---------------- APP ----------------
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ---------------- LOAD MODELS ----------------
-print("RUNNING FILE:", __file__)
-print("Loading models...")
-
-risk_model = xgb.XGBRegressor()
-risk_model.load_model("risk_model.json")
-
-scaler = joblib.load("feature_scaler.pkl")
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-nlp = spacy.load("en_core_web_sm")
-
-print("Models loaded.")
-
-# ---------------- FILE PARSERS ----------------
-def parse_pdf(path):
-    text = ""
-    with fitz.open(path) as pdf:
-        for page in pdf:
-            text += page.get_text()
-    return text
-
-def parse_docx(path):
-    doc = Document(path)
-    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-
-def parse_file(path, filename):
-    ext = os.path.splitext(filename)[1].lower()
-    if ext == ".pdf":
-        return parse_pdf(path)
-    elif ext in [".docx", ".doc"]:
-        return parse_docx(path)
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported file type")
-
-# ---------------- TEXT UTILS ----------------
-def clean_text(text):
-    return re.sub(r"\s+", " ", text).strip()
-
-METADATA_MARKERS = ["location:", "date:", "sender:", "from:", "address:"]
-
-# ---------------- EXTRACTION ----------------
-def extract_subject(raw_text):
-    match = re.search(
-        r"(?i)subject:\s*(.+?)(?:\n|we wish|this is to|location:)",
-        raw_text,
-        re.DOTALL
-    )
-    return match.group(1).strip() if match else None
-
-def extract_body(raw_text):
-    text = re.sub(r"(?i)^subject:.*?\n", "", raw_text, flags=re.DOTALL)
-    for marker in METADATA_MARKERS:
-        idx = text.lower().find(marker)
-        if idx != -1:
-            text = text[:idx]
-            break
-    return text.strip()
-
-def extract_complaint(body_text):
-    body_text = clean_text(body_text)
-    if len(body_text) < 50:
-        return ""
-    sentences = re.split(r"[.!?]", body_text)
-    sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
-    return ". ".join(sentences[:4])
-
-def extract_sender(raw_text):
-    match = re.search(r"(?i)(sender|from)\s*:\s*(.+)", raw_text)
-    return match.group(2).strip() if match else "Anonymous"
-
-def extract_date(raw_text):
-    patterns = [
-        r"\b\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b",
-        r"\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{4}\b",
-        r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b",
-        r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, raw_text, re.IGNORECASE)
-        if match:
-            for fmt in ("%d %B %Y", "%d %b %Y", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
-                try:
-                    return datetime.strptime(match.group(0), fmt).strftime("%Y-%m-%d")
-                except ValueError:
-                    continue
-    return "Not mentioned"
-
-def extract_location(raw_text):
-    match = re.search(r"(?i)location\s*:\s*(.+)", raw_text)
-    if match:
-        return match.group(1).strip()
-
-    doc = nlp(raw_text)
-    for ent in doc.ents:
-        if ent.label_ == "GPE":
-            return ent.text
-    return None
-
-# ---------------- POPULATION LOGIC (ADMIN-FIRST) ----------------
-
-def extract_affected_population(text):
-    match = re.search(
-        r"(affecting|affected|impacting)\s+(approximately\s+)?([\d,]+)\s+(people|residents|persons)",
-        text.lower()
-    )
-    if match:
-        return int(match.group(3).replace(",", ""))
-    return None
-
-def detect_administrative_scope(text):
-    text = text.lower()
-
-    if any(k in text for k in ["apartment", "housing complex", "society", "nagar", "residential complex","building"]):
-        return "apartment"
-    if any(k in text for k in ["lane", "street", "road", "sector", "block"]):
-        return "street"
-    if "ward" in text:
-        return "ward"
-    if any(k in text for k in ["taluka", "zone", "suburb"]):
-        return "suburb"
-    if any(k in text for k in ["entire city", "city-wide", "across the city"]):
-        return "city"
-
-    return "local"
-
-SCOPE_POPULATION = {
-    "apartment": 800,
-    "street": 3000,
-    "ward": 20000,
-    "suburb": 80000,
-    "city": 500000,
-    "local": 1000
-}
-
-def resolve_population(text, location: Optional[str]):
-    # 1️⃣ Explicit affected population (highest trust)
-    explicit = extract_affected_population(text)
-    if explicit:
-        return explicit
-
-    # 2️⃣ Administrative scope
-    scope = detect_administrative_scope(text)
-    return SCOPE_POPULATION.get(scope, 1000)
-
-def assign_relative_priority(results):
-    # Sort by risk score descending
-    results_sorted = sorted(
-        results,
-        key=lambda x: x["risk_analysis"]["risk_score"],
-        reverse=True
-    )
-
-    # Get unique risk scores (descending)
-    unique_scores = sorted(
-        {item["risk_analysis"]["risk_score"] for item in results_sorted},
-        reverse=True
-    )
-
-    total_levels = len(unique_scores)
-
-    score_to_priority = {}
-
-    for idx, score in enumerate(unique_scores):
-        ratio = idx / max(1, total_levels - 1)
-
-        if ratio <= 0.33:
-            priority = "High"
-        elif ratio <= 0.66:
-            priority = "Medium"
-        else:
-            priority = "Low"
-
-        score_to_priority[score] = priority
-
-    # Assign priority back to all items
-    for item in results_sorted:
-        score = item["risk_analysis"]["risk_score"]
-        item["risk_analysis"]["priority"] = score_to_priority[score]
-
-    return results_sorted
-
-
-
-
-
-# ---------------- RISK PIPELINE ----------------
-def predict_risk(complaint, population):
-    embedding = embedder.encode([complaint])[0]
-    population_log = np.log1p(population)
-
-    X = np.hstack([embedding, [population_log]]).reshape(1, -1)
-    X_scaled = scaler.transform(X)
-
-    risk = float(risk_model.predict(X_scaled)[0])
-
-    if risk < 40:
-        return round(risk, 2), "Low"
-    elif risk < 65:
-        return round(risk, 2), "Medium"
-    elif risk < 80:
-        return round(risk, 2), "High"
-    else:
-        return round(risk, 2), "Critical"
-
-# ---------------- MAIN API ----------------
-@app.post("/process-complaints")
-async def process_complaints(
-    files: List[UploadFile] = File(...)
-):
-    results = []
-
-    for file in files:
-        with tempfile.NamedTemporaryFile(delete=False) as temp:
-            temp.write(await file.read())
-            temp_path = temp.name
-
-        raw_text = parse_file(temp_path, file.filename)
-        os.remove(temp_path)
-
-        subject = extract_subject(raw_text)
-        body_text = extract_body(raw_text)
-        complaint = extract_complaint(body_text)
-
-        sender = extract_sender(raw_text)
-        date = extract_date(raw_text)
-        location = extract_location(raw_text)
-
-        population = resolve_population(raw_text, location)
-
-        risk_score, severity = predict_risk(complaint, population)
-
-        results.append({
-            "filename": file.filename,
-            "extracted": {
-                "subject": subject,
-                "complaint": complaint,
-                "sender": sender,
-                "date": date,
-                "location": location,
-                "population_used": population,
-                "metadata": {
-                    "file_type": file.content_type
-                }
-            },
-            "risk_analysis": {
-                "risk_score": risk_score,
-                "severity": severity,
-                
-            }
-        })
-
-    results = assign_relative_priority(results)
-
-
-    return {"results": results}
-'''
-
-
-
+import firebase_admin
+from firebase_admin import credentials,firestore
+import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Union
@@ -295,6 +11,8 @@ import os
 import re
 from datetime import datetime
 import xgboost as xgb
+from datetime import datetime
+
 
 import fitz  # PyMuPDF
 from docx import Document
@@ -306,7 +24,12 @@ from pdf2image import convert_from_path
 import pytesseract
 import pandas as pd
 
-# ---------------- APP ----------------
+# ---------------- APP ---------------- #
+cred = credentials.Certificate("firebase_key.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+
 app = FastAPI()
 
 app.add_middleware(
@@ -326,6 +49,24 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 nlp = spacy.load("en_core_web_sm")
 
 # ---------------- FILE PARSERS ----------------
+
+
+
+def store_complaint_firebase(result: dict):
+    doc_id = str(uuid.uuid4())
+
+    data = {
+        "filename": result["filename"],
+
+        **result["extracted"],
+        **result["risk_analysis"],
+
+        "status": "open",
+        "created_at": firestore.SERVER_TIMESTAMP,
+    }
+
+    db.collection("complaints").document(doc_id).set(data)
+
 def parse_pdf_text(path: str) -> str:
     text = ""
     with fitz.open(path) as pdf:
@@ -632,12 +373,56 @@ def assign_priority(results: list):
     return results
 
 # ---------------- API ----------------
+
+@app.patch("/admin/complaints/{complaint_id}/resolve")
+async def resolve_complaint(complaint_id: str):
+    """Mark a complaint as resolved"""
+    try:
+        # Update the document in Firestore
+        db.collection("complaints").document(complaint_id).update({
+            "status": "closed",
+            "resolved_at": firestore.SERVER_TIMESTAMP
+        })
+        
+        return {
+            "success": True,
+            "message": f"Complaint {complaint_id} marked as resolved",
+            "id": complaint_id
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to resolve complaint: {str(e)}"
+        )
+
+
+@app.get("/admin/complaints")
+def get_all_complaints(status: str = None):
+    """
+    Get complaints, optionally filtered by status
+    Query params: ?status=open or ?status=closed
+    """
+    query = db.collection("complaints")
+    
+    # Optional status filter
+    if status:
+        query = query.where("status", "==", status)
+    
+    docs = query.order_by("created_at", direction=firestore.Query.DESCENDING).stream()
+    
+    return [
+        {"id": doc.id, **doc.to_dict()}
+        for doc in docs
+    ]
+
+
 @app.post("/process-complaints")
 async def process_complaints(files: List[UploadFile] = File(...)):
     results = []
 
     for f in files:
         suffix = os.path.splitext(f.filename)[1]
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await f.read())
             path = tmp.name
@@ -655,13 +440,14 @@ async def process_complaints(files: List[UploadFile] = File(...)):
             for row in raw:
                 body = extract_body(row["complaint"])
                 complaint = extract_complaint(body)
+
                 if not complaint:
                     continue
 
                 population = resolve_population(body)
                 risk, severity = predict_risk(complaint, population)
 
-                results.append({
+                result = {
                     "filename": f.filename,
                     "extracted": {
                         "subject": row["subject"] or None,
@@ -676,8 +462,12 @@ async def process_complaints(files: List[UploadFile] = File(...)):
                         "risk_score": risk,
                         "severity": severity
                     }
-                })
-            continue
+                }
+
+                results.append(result)
+                store_complaint_firebase(result)  # ✅ store EACH ROW
+
+            continue  # move to next uploaded file
 
         # ---------- PDF / DOCX ----------
         subject = extract_subject(raw)
@@ -693,7 +483,7 @@ async def process_complaints(files: List[UploadFile] = File(...)):
         population = resolve_population(body)
         risk, severity = predict_risk(complaint, population)
 
-        results.append({
+        result = {
             "filename": f.filename,
             "extracted": {
                 "subject": subject,
@@ -708,6 +498,9 @@ async def process_complaints(files: List[UploadFile] = File(...)):
                 "risk_score": risk,
                 "severity": severity
             }
-        })
+        }
+
+        results.append(result)
+        store_complaint_firebase(result)  # ✅ store ONE document
 
     return {"results": assign_priority(results)}

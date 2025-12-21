@@ -3,6 +3,8 @@ __pycache__/
 *.npy
 *.ipynb
 .env
+.env.local
 venv/
 myenv/
 node_modules/
+firebase_key/
