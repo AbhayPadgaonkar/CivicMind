@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Navbar from "@/app/components/Navbar";
+import Link from "next/link";
 
 const DUMMY_TASKS = [
   {
@@ -95,7 +96,7 @@ const RiskMap = dynamic(() => import("@/app/components/LeafletMap"), {
 
 export default function Dashboard() {
   // --- STATE ---
-  const [tasks, setTasks] = useState<any[]>([]); // Real data goes here
+  const [tasks, setTasks] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -103,18 +104,43 @@ export default function Dashboard() {
   // Hidden file input reference
   const fileInputRef = useRef<HTMLInputElement>(null);
 
- useEffect(() => {
-  setMounted(true);
+  // ✅ FIXED: Load real data from localStorage
+  useEffect(() => {
+    setMounted(true);
 
-  // ✅ MVP MODE: Use dummy data
-  const sortedDummy = [...DUMMY_TASKS].sort(
-    (a, b) => b.score - a.score
-  );
-  setTasks(sortedDummy);
+    // Try to load data from localStorage (set by InputPage)
+    const storedData = localStorage.getItem("dashboardData");
 
-  // ❌ Disable backend / localStorage for now
-  // Later you can re-enable this when backend is ready
-}, []);
+    if (storedData) {
+      try {
+        const parsedData = JSON.parse(storedData);
+
+        // Transform data to ensure correct structure
+        const transformedData = parsedData.map((item: any) => ({
+          id: item.id || `task-${Date.now()}-${Math.random()}`,
+          title: item.title || item.source || "Unknown Issue",
+          zone: item.zone || item.location || "Unknown Location",
+          priority: item.priority || item.severity || "Medium",
+          score: item.score || item.risk_score || 50,
+          time: item.time || "Recently",
+          coords: item.coords || item.coordinates || [19.0760, 72.8777], // Default Mumbai coords
+          fullAnalysis: item.fullAnalysis || item.complaint || "No detailed analysis available.",
+        }));
+
+        const sortedData = transformedData.sort((a: any, b: any) => b.score - a.score);
+        setTasks(sortedData);
+
+        console.log("✅ Loaded analyzed data from localStorage:", sortedData);
+      } catch (error) {
+        console.error("❌ Failed to parse stored data:", error);
+        console.warn("⚠️ Using dummy data as fallback");
+        setTasks(DUMMY_TASKS);
+      }
+    } else {
+      console.warn("⚠️ No analyzed data found in localStorage, using dummy data");
+      setTasks(DUMMY_TASKS);
+    }
+  }, []);
 
   // --- API LOGIC (In case user uploads MORE files from dashboard) ---
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,9 +155,11 @@ export default function Dashboard() {
     try {
       // Call Python Backend
       const response = await axios.post(
-        "http://localhost:8000/process-complaints",
+        "http://127.0.0.1:8000/process-complaints",
         formData
       );
+
+      console.log("✅ Backend response:", response.data);
 
       // TRANSFORM DATA
       const newTasks = response.data.results.map(
@@ -142,7 +170,7 @@ export default function Dashboard() {
           priority: item.risk_analysis.severity,
           score: item.risk_analysis.risk_score,
           time: "Just now",
-          coords: item.extracted.coordinates,
+          coords: item.extracted.coordinates || [19.0760, 72.8777],
           fullAnalysis: item.extracted.complaint,
         })
       );
@@ -150,11 +178,17 @@ export default function Dashboard() {
       // Merge new files with existing tasks and sort
       setTasks((prev) => {
         const merged = [...newTasks, ...prev];
-        return merged.sort((a: any, b: any) => b.score - a.score);
+        const sorted = merged.sort((a: any, b: any) => b.score - a.score);
+
+        // Update localStorage with new merged data
+        localStorage.setItem("dashboardData", JSON.stringify(sorted));
+        console.log("✅ Updated localStorage with new data");
+
+        return sorted;
       });
     } catch (error) {
-      console.error("Upload failed", error);
-      alert("Failed to connect to AI Backend. Is it running?");
+      console.error("❌ Upload failed:", error);
+      alert("Failed to connect to AI Backend. Is it running on http://127.0.0.1:8000?");
     } finally {
       setLoading(false);
     }
@@ -191,6 +225,7 @@ export default function Dashboard() {
         className="hidden"
         ref={fileInputRef}
         onChange={handleFileChange}
+        accept=".pdf,.docx,.doc"
       />
 
       {/* BACKGROUND AMBIENCE */}
@@ -203,8 +238,6 @@ export default function Dashboard() {
         {/* MAIN CONTENT */}
         <Navbar></Navbar>
         <main className="flex-1 mt-20 flex flex-col relative overflow-hidden">
-          {/* HEADER */}
-
           {/* DASHBOARD BODY */}
           <div className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar">
             {/* STATS STRIP - NOW DYNAMIC */}
@@ -230,8 +263,8 @@ export default function Dashboard() {
                   val:
                     tasks.length > 0
                       ? Math.round(
-                          tasks.reduce((a, b) => a + b.score, 0) / tasks.length
-                        )
+                        tasks.reduce((a, b) => a + b.score, 0) / tasks.length
+                      )
                       : 0,
                   sub: "Global Index",
                   icon: Activity,
@@ -251,10 +284,9 @@ export default function Dashboard() {
                   transition={{ delay: i * 0.1 }}
                   key={i}
                   className={`relative overflow-hidden p-6 rounded-3xl border transition-all duration-300 group
-                    ${
-                      stat.alert
-                        ? "bg-red-500/5 border-red-500/20 shadow-[0_0_20px_rgba(239,68,68,0.1)]"
-                        : "bg-white/[0.02] border-white/5"
+                    ${stat.alert
+                      ? "bg-red-500/5 border-red-500/20 shadow-[0_0_20px_rgba(239,68,68,0.1)]"
+                      : "bg-white/[0.02] border-white/5"
                     }
                   `}
                 >
@@ -279,7 +311,6 @@ export default function Dashboard() {
                   animate={{ opacity: 1, scale: 1 }}
                   className="flex-1 relative rounded-[32px] overflow-hidden border border-white/10 bg-[#0A0510] shadow-2xl group"
                 >
-                  {/* ... Map Decorations ... */}
                   <div className="w-full h-full opacity-70 group-hover:opacity-100 transition-opacity mix-blend-lighten">
                     <RiskMap data={tasks} />
                   </div>
@@ -287,33 +318,52 @@ export default function Dashboard() {
 
                 {/* TASK LIST - USING REAL 'tasks' STATE */}
                 <div className="h-1/2 bg-white/[0.02] border border-white/5 rounded-[24px] p-6 backdrop-blur-md flex flex-col relative overflow-hidden">
-                  {/* ... Header ... */}
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold">Priority Queue</h3>
+                    <button
+                      onClick={triggerUpload}
+                      disabled={loading}
+                      className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded-lg transition-all text-sm"
+                    >
+                      {loading ? (
+                        <>
+                          <Logs className="w-4 h-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" />
+                          Add More Files
+                        </>
+                      )}
+                    </button>
+                  </div>
+
                   <div className="overflow-y-auto space-y-2 pr-2 custom-scrollbar relative z-10">
                     {tasks.length === 0 ? (
                       <div className="text-center text-gray-500 py-10">
-                        Waiting for data upload...
+                        <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                        <p>No analyzed data found.</p>
+                        <p className="text-xs mt-2">Upload files from the Input Page or use the button above.</p>
                       </div>
                     ) : (
                       tasks.map((task, i) => (
                         <div
-                          key={i}
+                          key={task.id}
                           onClick={() => setSelectedTicket(task)}
                           className={`flex items-center justify-between p-3.5 rounded-xl border transition-all cursor-pointer group
-                               ${
-                                 selectedTicket?.id === task.id
-                                   ? "bg-purple-500/10 border-purple-500/30"
-                                   : "bg-transparent border-transparent hover:bg-white/5"
-                               }
+                               ${selectedTicket?.id === task.id
+                              ? "bg-purple-500/10 border-purple-500/30"
+                              : "bg-transparent border-transparent hover:bg-white/5"
+                            }
                             `}
                         >
-                          {/* ... Task Row Content ... */}
                           <div className="flex items-center gap-4">
                             <div
-                              className={`font-mono font-bold text-lg ${
-                                task.priority === "Critical"
+                              className={`font-mono font-bold text-lg ${task.priority === "Critical"
                                   ? "text-red-400"
                                   : "text-purple-300"
-                              }`}
+                                }`}
                             >
                               {task.score}
                             </div>
@@ -338,12 +388,18 @@ export default function Dashboard() {
                     )}
                   </div>
                 </div>
+                <Link href="/dashboard/track">
+                  <button className="group relative px-8 py-4 bg-white text-black font-bold rounded-xl hover:scale-[1.02] transition-transform shadow-[0_0_40px_rgba(255,255,255,0.3)]">
+                    <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl" />
+                    <span className="relative z-10 flex items-center gap-3">
+                      Track complaints <ArrowRight className="w-5 h-5" />
+                    </span>
+                  </button>
+                </Link>
               </div>
 
               {/* RIGHT: AI PANEL - USING 'selectedTicket' or 'criticalTasks' */}
               <div className="lg:col-span-4 flex flex-col h-full bg-[#0F0518]/90 backdrop-blur-xl border border-white/10 rounded-[32px] p-6 relative overflow-hidden">
-                {/* ... AI Panel Content ... */}
-
                 <AnimatePresence mode="wait">
                   {selectedTicket ? (
                     <motion.div
@@ -352,7 +408,6 @@ export default function Dashboard() {
                       animate={{ opacity: 1, x: 0 }}
                       className="flex-1 flex flex-col relative z-10 overflow-hidden"
                     >
-                      {/* ... Detail View ... */}
                       <h3 className="text-2xl font-bold text-white mb-6 leading-tight">
                         {selectedTicket.title}
                       </h3>
@@ -366,7 +421,7 @@ export default function Dashboard() {
                       </div>
                       <button
                         onClick={() => setSelectedTicket(null)}
-                        className="mt-auto w-full py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl"
+                        className="mt-auto w-full py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-colors"
                       >
                         Back to Feed
                       </button>
@@ -397,28 +452,32 @@ export default function Dashboard() {
                         </p>
                       )}
 
-                      {criticalTasks.map((task) => (
-                        <div
-                          key={task.id}
-                          className="p-5 bg-gradient-to-br from-red-500/10 to-transparent border border-red-500/20 rounded-2xl mb-4"
-                        >
-                          <div className="text-white text-lg font-bold">
-                            {task.title}
-                          </div>
-                          <div className="text-red-300/70 text-xs mb-3">
-                            {task.zone}
-                          </div>
-                          <button
-                            onClick={() => setSelectedTicket(task)}
-                            className="text-xs text-red-400 underline flex items-center gap-1"
+                      <div className="overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                        {criticalTasks.map((task) => (
+                          <div
+                            key={task.id}
+                            className="p-5 bg-gradient-to-br from-red-500/10 to-transparent border border-red-500/20 rounded-2xl"
                           >
-                            View Analysis <ArrowRight className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
+                            <div className="text-white text-lg font-bold">
+                              {task.title}
+                            </div>
+                            <div className="text-red-300/70 text-xs mb-3">
+                              {task.zone}
+                            </div>
+                            <button
+                              onClick={() => setSelectedTicket(task)}
+                              className="text-xs text-red-400 underline flex items-center gap-1 hover:text-red-300 transition-colors"
+                            >
+                              View Analysis <ArrowRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
+
+
               </div>
             </div>
           </div>
