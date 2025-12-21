@@ -12,7 +12,9 @@ import re
 from datetime import datetime
 import xgboost as xgb
 from datetime import datetime
-
+from dotenv import load_dotenv
+from google.oauth2 import service_account
+import json
 
 import fitz  # PyMuPDF
 from docx import Document
@@ -24,24 +26,20 @@ from pdf2image import convert_from_path
 import pytesseract
 import pandas as pd
 
-# ---------------- APP ---------------- #
-cred = {
-        "type": os.getenv("FIREBASE_TYPE"),
-        "project_id": os.getenv("FIREBASE_PROJECT_ID"),
-        "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-        "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace("\\n", "\n"),
-        "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-        "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-        "auth_uri": os.getenv("FIREBASE_AUTH_URI"),
-        "token_uri": os.getenv("FIREBASE_TOKEN_URI"),
-        "auth_provider_x509_cert_url": os.getenv("FIREBASE_AUTH_PROVIDER_CERT_URL"),
-        "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL"),
-        "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN"),
-    }
+load_dotenv()
 
-firebase_admin.initialize_app(cred)
+json_str = os.getenv("FIREBASE_CREDS")
+cred_info = json.loads(json_str)
+
+if "private_key" in cred_info:
+    cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
+
+firebase_cred = credentials.Certificate(cred_info)
+
+if not firebase_admin._apps:
+    firebase_admin.initialize_app(firebase_cred)
+
 db = firestore.client()
-
 
 app = FastAPI()
 
@@ -53,17 +51,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- LOAD MODELS ----------------
 risk_model = xgb.XGBRegressor()
 risk_model.load_model("risk_model.json")
 
 scaler = joblib.load("feature_scaler.pkl")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 nlp = spacy.load("en_core_web_sm")
-
-# ---------------- FILE PARSERS ----------------
-
-
 
 def store_complaint_firebase(result: dict):
     doc_id = str(uuid.uuid4())
@@ -139,7 +132,6 @@ def parse_file(path: str, filename: str) -> tuple[Union[str, list], bool]:
         detail="Unsupported file type. Upload PDF, DOCX, CSV, XLS or XLSX only."
     )
 
-# ---------------- TEXT EXTRACTION ----------------
 def clean_text(t: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
@@ -184,16 +176,16 @@ def extract_date(text: str) -> str:
     t = re.sub(r"\s+", " ", text)
 
     patterns = [
-        # 02 September 2025 / 2 September2025
+     
         r"\b\d{1,2}\s*(January|February|March|April|May|June|July|August|September|October|November|December)\s*\d{4}\b",
 
-        # 02 Sep 2025 / 2Sep2025
+
         r"\b\d{1,2}\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s*\d{4}\b",
 
-        # 02-09-2025 / 02/09/2025
+
         r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b",
 
-        # 2025-09-02
+
         r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b",
     ]
 
@@ -210,15 +202,13 @@ def extract_date(text: str) -> str:
                     return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
                 except:
                     pass
-            return raw  # fallback if parsing fails
-
+            return raw 
     return "Not mentioned"
 
 
 def extract_location(text: str) -> Optional[str]:
     t = re.sub(r"\s+", " ", text)
 
-    # 1️⃣ Zone patterns (OCR tolerant)
     zone_patterns = [
         r"\bzone\s*[-:]?\s*\d+\b",   # Zone 3, Zone-3
         r"\bz\s*o\s*n\s*e\s*\d+\b",  # Z O N E 3 (OCR spaced)
@@ -285,7 +275,6 @@ def extract_body(raw_text: str) -> str:
         if len(line) < 30:
             continue
 
-        # ---------- KEEP ONLY SENTENCE-LIKE LINES ----------
 
         # Must contain at least one verb-like word
         if not re.search(r"\b(is|are|has|have|was|were|remain|causing|resulting)\b", line, re.I):

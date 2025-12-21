@@ -5,86 +5,23 @@ import dynamic from "next/dynamic";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  LayoutDashboard,
-  Map as MapIcon,
   FileText,
-  Bell,
-  Search,
-  CheckCircle,
-  ArrowRight,
-  Zap,
-  Cpu,
   ShieldAlert,
-  X,
+  Zap,
   Activity,
-  Siren,
+  ArrowRight,
   Upload,
   Logs,
+  CheckCircle2,
+  Building2,
+  AlertTriangle,
+  Trash2,
+  Network
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import Navbar from "@/app/components/Navbar";
 import Link from "next/link";
 
-const DUMMY_TASKS = [
-  {
-    id: "CMP-001",
-    title: "Severe water leakage near main road",
-    zone: "Ward 12 – Andheri East",
-    priority: "Critical",
-    score: 92,
-    time: "2 mins ago",
-    coords: [19.1136, 72.8697],
-    fullAnalysis:
-      "Major water pipeline leakage reported near the main road. Continuous water wastage observed, affecting traffic and nearby residences. Immediate intervention required to prevent further damage.",
-  },
-  {
-    id: "CMP-002",
-    title: "Garbage not collected for 5 days",
-    zone: "Ward 7 – Borivali West",
-    priority: "High",
-    score: 78,
-    time: "15 mins ago",
-    coords: [19.2317, 72.8441],
-    fullAnalysis:
-      "Residents have reported accumulation of garbage for more than five days, causing foul smell and health risks. Sanitation department needs to deploy collection immediately.",
-  },
-  {
-    id: "CMP-003",
-    title: "Street light not working",
-    zone: "Ward 3 – Dadar",
-    priority: "Medium",
-    score: 54,
-    time: "30 mins ago",
-    coords: [19.0176, 72.8562],
-    fullAnalysis:
-      "Multiple street lights reported non-functional, causing safety concerns during night hours. Electrical maintenance required.",
-  },
-  {
-    id: "CMP-004",
-    title: "Illegal construction blocking drainage",
-    zone: "Ward 19 – Kurla",
-    priority: "Critical",
-    score: 88,
-    time: "1 hour ago",
-    coords: [19.0728, 72.8826],
-    fullAnalysis:
-      "Unauthorized construction activity is blocking stormwater drainage, increasing flood risk during monsoon. Enforcement action required.",
-  },
-  {
-    id: "CMP-005",
-    title: "Potholes causing traffic congestion",
-    zone: "Ward 10 – Malad East",
-    priority: "High",
-    score: 71,
-    time: "2 hours ago",
-    coords: [19.1864, 72.8484],
-    fullAnalysis:
-      "Large potholes reported on main road leading to frequent traffic jams and vehicle damage. Road repair team needs scheduling.",
-  },
-];
-
-
-// --- Dynamic Map Import ---
+// Dynamic import for the Map component to avoid SSR issues
 const RiskMap = dynamic(() => import("@/app/components/LeafletMap"), {
   ssr: false,
   loading: () => (
@@ -95,389 +32,426 @@ const RiskMap = dynamic(() => import("@/app/components/LeafletMap"), {
 });
 
 export default function Dashboard() {
-  // --- STATE ---
   const [tasks, setTasks] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
-
-  // Hidden file input reference
+  const [pdfJsLoaded, setPdfJsLoaded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ✅ FIXED: Load real data from localStorage
+  // Initialize data and load PDF.js
   useEffect(() => {
     setMounted(true);
-
-    // Try to load data from localStorage (set by InputPage)
     const storedData = localStorage.getItem("dashboardData");
-
     if (storedData) {
       try {
         const parsedData = JSON.parse(storedData);
-
-        // Transform data to ensure correct structure
-        const transformedData = parsedData.map((item: any) => ({
-          id: item.id || `task-${Date.now()}-${Math.random()}`,
-          title: item.title || item.source || "Unknown Issue",
-          zone: item.zone || item.location || "Unknown Location",
-          priority: item.priority || item.severity || "Medium",
-          score: item.score || item.risk_score || 50,
-          time: item.time || "Recently",
-          coords: item.coords || item.coordinates || [19.0760, 72.8777], // Default Mumbai coords
-          fullAnalysis: item.fullAnalysis || item.complaint || "No detailed analysis available.",
-        }));
-
-        const sortedData = transformedData.sort((a: any, b: any) => b.score - a.score);
+        const sortedData = parsedData.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
         setTasks(sortedData);
-
-        console.log("✅ Loaded analyzed data from localStorage:", sortedData);
       } catch (error) {
-        console.error("❌ Failed to parse stored data:", error);
-        console.warn("⚠️ Using dummy data as fallback");
-        setTasks(DUMMY_TASKS);
+        console.error("Failed to load data", error);
+        setTasks([]);
       }
-    } else {
-      console.warn("⚠️ No analyzed data found in localStorage, using dummy data");
-      setTasks(DUMMY_TASKS);
     }
+
+    // Load PDF.js dynamically
+    const loadPdfJs = () => {
+      if ((window as any)['pdfjs-dist/build/pdf']) {
+        setPdfJsLoaded(true);
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.async = true;
+      script.onload = () => {
+        console.log("✅ PDF.js loaded successfully");
+        setPdfJsLoaded(true);
+      };
+      script.onerror = () => {
+        console.error("❌ Failed to load PDF.js");
+      };
+      document.body.appendChild(script);
+    };
+
+    loadPdfJs();
   }, []);
 
-  // --- API LOGIC (In case user uploads MORE files from dashboard) ---
+  const clearHistory = () => {
+    if(confirm("Clear all dashboard history?")) {
+        localStorage.removeItem("dashboardData");
+        setTasks([]);
+        setSelectedTicket(null);
+    }
+  };
+
+  const testConnection = async () => {
+    try {
+        console.log("Testing connection to http://localhost:8001/health...");
+        const res = await axios.get("http://localhost:8001/health");
+        alert(`✅ Server is Online!\nStatus: ${res.data.status}\nDevice: ${res.data.device}`);
+    } catch (error: any) {
+        console.error("Connection failed:", error);
+        alert(`❌ Connection Failed.\nMake sure backend is running on port 8001.\nError: ${error.message}`);
+    }
+  };
+
+  // PDF extraction function
+  const extractTextFromPDF = async (file: File): Promise<string> => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const pdfjsLib = (window as any)['pdfjs-dist/build/pdf'];
+        if (!pdfjsLib) {
+          reject(new Error("PDF.js library not loaded yet. Please try again in a moment."));
+          return;
+        }
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        
+        console.log(`📄 PDF loaded: ${pdf.numPages} pages`);
+        
+        let fullText = '';
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item: any) => item.str).join(' ');
+          fullText += pageText + '\n\n';
+        }
+        
+        console.log(`✅ Extracted ${fullText.length} characters from PDF`);
+        resolve(fullText.trim());
+      } catch (error) {
+        console.error("❌ PDF extraction error:", error);
+        reject(error);
+      }
+    });
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
-
+    
+    console.log("📂 Files selected:", e.target.files.length);
     setLoading(true);
-    const formData = new FormData();
-    for (let i = 0; i < e.target.files.length; i++) {
-      formData.append("files", e.target.files[i]);
-    }
 
     try {
-      // Call Python Backend
-      const response = await axios.post(
-        "http://127.0.0.1:8000/process-complaints",
-        formData
-      );
+      for (let i = 0; i < e.target.files.length; i++) {
+        const file = e.target.files[i];
+        console.log(`\n🔍 Processing: ${file.name}`);
 
-      console.log("✅ Backend response:", response.data);
+        let textContent: string;
 
-      // TRANSFORM DATA
-      const newTasks = response.data.results.map(
-        (item: any, index: number) => ({
-          id: `API-${Date.now()}-${index}`,
-          title: item.extracted.subject || "Unknown Issue",
-          zone: item.extracted.location || "Unknown Location",
-          priority: item.risk_analysis.severity,
-          score: item.risk_analysis.risk_score,
+        // Check if PDF
+        const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+        if (isPDF) {
+          if (!pdfJsLoaded) {
+            throw new Error("PDF.js is still loading. Please wait a moment and try again.");
+          }
+          console.log("📄 Detected PDF - extracting text...");
+          textContent = await extractTextFromPDF(file);
+        } else {
+          console.log("📝 Reading as text file...");
+          textContent = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (event) => resolve(event.target?.result as string);
+            reader.onerror = (error) => reject(error);
+            reader.readAsText(file);
+          });
+        }
+
+        if (!textContent || textContent.trim().length === 0) {
+          throw new Error(`No text content found in ${file.name}`);
+        }
+
+        console.log(`📝 Extracted preview: ${textContent.substring(0, 200)}...`);
+        console.log("📤 Sending to AI Backend...");
+        
+        const response = await axios.post("http://localhost:8001/chat", {
+          query: textContent,
+          top_k: 2
+        });
+
+        console.log("✅ Full Response:", response.data);
+        
+        const aiAnswer = response.data.answer || response.data;
+        console.log("🤖 AI Answer:", aiAnswer);
+
+        if (!aiAnswer) {
+          throw new Error("Backend returned empty response");
+        }
+
+        const severityMap: Record<string, number> = {
+          "Critical": 98,
+          "High": 85,
+          "Medium": 65,
+          "Low": 40
+        };
+
+        const severity = aiAnswer?.severity || "Medium";
+        const score = severityMap[severity] || 60;
+
+        const newTask = {
+          id: `AI-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          title: file.name, 
+          zone: aiAnswer?.location || aiAnswer?.zone || "Detected Zone", 
+          priority: severity,
+          department: aiAnswer?.department || "General",
+          explanation: aiAnswer?.explanation || aiAnswer?.context || "No explanation provided.",
+          resolution: aiAnswer?.resolution || aiAnswer?.recommended_action || "No resolution provided.",
+          score: score,
           time: "Just now",
-          coords: item.extracted.coordinates || [19.0760, 72.8777],
-          fullAnalysis: item.extracted.complaint,
-        })
-      );
+          coords: [19.0760, 72.8777]
+        };
 
-      // Merge new files with existing tasks and sort
-      setTasks((prev) => {
-        const merged = [...newTasks, ...prev];
-        const sorted = merged.sort((a: any, b: any) => b.score - a.score);
+        console.log("✅ Created task:", newTask);
 
-        // Update localStorage with new merged data
-        localStorage.setItem("dashboardData", JSON.stringify(sorted));
-        console.log("✅ Updated localStorage with new data");
+        setTasks((prev) => {
+          const merged = [newTask, ...prev];
+          const sorted = merged.sort((a: any, b: any) => b.score - a.score);
+          localStorage.setItem("dashboardData", JSON.stringify(sorted));
+          return sorted;
+        });
+      }
 
-        return sorted;
-      });
-    } catch (error) {
-      console.error("❌ Upload failed:", error);
-      alert("Failed to connect to AI Backend. Is it running on http://127.0.0.1:8000?");
+      alert(`✅ Successfully processed ${e.target.files.length} file(s)!`);
+
+    } catch (error: any) {
+      console.error("❌ Error:", error);
+      
+      let errorMessage = "Failed to process file:\n\n";
+      if (error.response) {
+        errorMessage += `Backend Error: ${JSON.stringify(error.response.data)}`;
+      } else if (error.request) {
+        errorMessage += `Cannot connect to backend at localhost:8001`;
+      } else {
+        errorMessage += error.message;
+      }
+      alert(errorMessage);
+      
     } finally {
       setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  const triggerUpload = () => {
-    fileInputRef.current?.click();
-  };
+  const triggerUpload = () => fileInputRef.current?.click();
 
+  // Helper for small list items
   const getPriorityStyles = (p: string) => {
     const priority = p?.toLowerCase();
-    if (priority === "critical")
-      return "text-red-400 bg-red-500/10 border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.2)]";
-    if (priority === "high")
-      return "text-orange-400 bg-orange-500/10 border-orange-500/20";
-    if (priority === "medium")
-      return "text-yellow-400 bg-yellow-500/10 border-yellow-500/20";
+    if (priority === "critical") return "text-red-400 bg-red-500/10 border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.2)]";
+    if (priority === "high") return "text-orange-400 bg-orange-500/10 border-orange-500/20";
+    if (priority === "medium") return "text-yellow-400 bg-yellow-500/10 border-yellow-500/20";
     return "text-purple-400 bg-purple-500/10 border-purple-500/20";
   };
 
   if (!mounted) return null;
-
-  // Derived State
-  const criticalTasks = tasks.filter(
-    (t) => t.priority === "Critical" || t.priority === "High"
-  );
+  const criticalTasks = tasks.filter((t) => t.priority === "Critical" || t.priority === "High");
 
   return (
     <div className="relative min-h-screen bg-[#05020A] text-white overflow-hidden font-sans selection:bg-purple-500/30">
-      {/* Hidden File Input */}
-      <input
-        type="file"
-        multiple
-        className="hidden"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept=".pdf,.docx,.doc"
-      />
-
-      {/* BACKGROUND AMBIENCE */}
+      <input type="file" multiple className="hidden" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.txt,.csv,.json" />
+      
+      {/* Background Ambience */}
       <div className="fixed inset-0 z-0 pointer-events-none">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:32px_32px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]"></div>
         <div className="absolute top-0 left-1/3 w-200 h-200 bg-purple-600/20 rounded-full blur-[120px] mix-blend-screen animate-pulse" />
       </div>
 
       <div className="relative z-10 flex h-screen">
-        {/* MAIN CONTENT */}
-        <Navbar></Navbar>
+        <Navbar />
         <main className="flex-1 mt-20 flex flex-col relative overflow-hidden">
-          {/* DASHBOARD BODY */}
           <div className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar">
-            {/* STATS STRIP - NOW DYNAMIC */}
+            
+            {/* STATS STRIP - UPDATED (Brighter) */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {[
-                {
-                  label: "Files Processed",
-                  val: tasks.length,
-                  sub: "Live Data",
-                  icon: FileText,
-                  color: "text-indigo-400",
-                },
-                {
-                  label: "High Risk Zones",
-                  val: criticalTasks.length,
-                  sub: "Action Req",
-                  icon: ShieldAlert,
-                  color: "text-red-400",
-                  alert: criticalTasks.length > 0,
-                },
-                {
-                  label: "Avg Risk Score",
-                  val:
-                    tasks.length > 0
-                      ? Math.round(
-                        tasks.reduce((a, b) => a + b.score, 0) / tasks.length
-                      )
-                      : 0,
-                  sub: "Global Index",
-                  icon: Activity,
-                  color: "text-amber-400",
-                },
-                {
-                  label: "System Status",
-                  val: "ONLINE",
-                  sub: "Latency 12ms",
-                  icon: Zap,
-                  color: "text-emerald-400",
-                },
+                { label: "Files Processed", val: tasks.length, sub: "Live Data", icon: FileText, color: "text-indigo-400" },
+                { label: "High Risk Zones", val: criticalTasks.length, sub: "Action Req", icon: ShieldAlert, color: "text-red-400", alert: criticalTasks.length > 0 },
+                { label: "Avg Risk Score", val: tasks.length > 0 ? Math.round(tasks.reduce((a, b) => a + b.score, 0) / tasks.length) : 0, sub: "Global Index", icon: Activity, color: "text-amber-400" },
+                { label: "System Status", val: "ONLINE", sub: "Latency 12ms", icon: Zap, color: "text-emerald-400" },
               ].map((stat, i) => (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.1 }}
-                  key={i}
-                  className={`relative overflow-hidden p-6 rounded-3xl border transition-all duration-300 group
-                    ${stat.alert
-                      ? "bg-red-500/5 border-red-500/20 shadow-[0_0_20px_rgba(239,68,68,0.1)]"
-                      : "bg-white/[0.02] border-white/5"
-                    }
-                  `}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  transition={{ delay: i * 0.1 }} 
+                  key={i} 
+                  className={`relative overflow-hidden p-6 rounded-3xl border transition-all duration-300 group backdrop-blur-md ${
+                    stat.alert 
+                      ? "bg-red-500/10 border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.2)]" 
+                      : "bg-white/10 border-white/10 hover:bg-white/15"
+                  }`}
                 >
                   <div className="relative z-10">
-                    <h3 className="text-4xl font-bold text-white tracking-tight mb-1">
-                      {stat.val}
-                    </h3>
-                    <div className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-                      {stat.label}
+                    <h3 className="text-4xl font-bold text-white tracking-tight mb-1">{stat.val}</h3>
+                    <div className="flex items-center gap-2">
+                        <stat.icon className={`w-4 h-4 ${stat.color}`} />
+                        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">{stat.label}</div>
                     </div>
                   </div>
                 </motion.div>
               ))}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:h-[600px]">
-              {/* LEFT: MAP & LIST */}
-              <div className="lg:col-span-8 flex flex-col gap-6">
-                {/* MAP - PASS DATA PROP */}
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="flex-1 relative rounded-[32px] overflow-hidden border border-white/10 bg-[#0A0510] shadow-2xl group"
-                >
-                  <div className="w-full h-full opacity-70 group-hover:opacity-100 transition-opacity mix-blend-lighten">
+            {/* MAIN CONTENT GRID - UPDATED (Taller Height: 850px) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:h-[850px]">
+              
+              {/* LEFT COLUMN */}
+              <div className="lg:col-span-8 flex flex-col gap-6 h-full">
+                
+                {/* MAP - Uses flex-[2] to take up ~66% of vertical space */}
+                <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="flex-[2] relative rounded-[32px] overflow-hidden border border-white/10 bg-[#0A0510] shadow-2xl group">
+                  <div className="w-full h-full opacity-100 transition-opacity">
                     <RiskMap data={tasks} />
                   </div>
                 </motion.div>
 
-                {/* TASK LIST - USING REAL 'tasks' STATE */}
-                <div className="h-1/2 bg-white/[0.02] border border-white/5 rounded-[24px] p-6 backdrop-blur-md flex flex-col relative overflow-hidden">
+                {/* PRIORITY QUEUE - Uses flex-[1] to take up ~33% of vertical space */}
+                <div className="flex-[1] bg-white/[0.02] border border-white/5 rounded-[24px] p-6 backdrop-blur-md flex flex-col relative overflow-hidden">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold">Priority Queue</h3>
-                    <button
-                      onClick={triggerUpload}
-                      disabled={loading}
-                      className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded-lg transition-all text-sm"
-                    >
-                      {loading ? (
-                        <>
-                          <Logs className="w-4 h-4 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-4 h-4" />
-                          Add More Files
-                        </>
-                      )}
-                    </button>
+                    <div className="flex gap-2">
+                        <button onClick={testConnection} className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-300 text-xs transition-all">
+                            <Network className="w-3 h-3" /> Test API
+                        </button>
+                        
+                        {tasks.length > 0 && (
+                            <button onClick={clearHistory} className="flex items-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-300 text-xs transition-all">
+                                <Trash2 className="w-3 h-3" /> Clear
+                            </button>
+                        )}
+                        <button onClick={triggerUpload} disabled={loading || !pdfJsLoaded} className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded-lg transition-all text-sm disabled:opacity-50">
+                        {loading ? <><Logs className="w-4 h-4 animate-spin" /> Processing...</> : !pdfJsLoaded ? <><Logs className="w-4 h-4 animate-spin" /> Loading...</> : <><Upload className="w-4 h-4" /> Upload</>}
+                        </button>
+                    </div>
                   </div>
 
-                  <div className="overflow-y-auto space-y-2 pr-2 custom-scrollbar relative z-10">
+                  <div className="overflow-y-auto space-y-2 pr-2 custom-scrollbar relative z-10 h-full">
                     {tasks.length === 0 ? (
-                      <div className="text-center text-gray-500 py-10">
-                        <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                        <p>No analyzed data found.</p>
-                        <p className="text-xs mt-2">Upload files from the Input Page or use the button above.</p>
+                      <div className="text-center text-gray-500 py-4">
+                        <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        <p className="text-xs">No analyzed data found.</p>
                       </div>
                     ) : (
-                      tasks.map((task, i) => (
-                        <div
-                          key={task.id}
-                          onClick={() => setSelectedTicket(task)}
-                          className={`flex items-center justify-between p-3.5 rounded-xl border transition-all cursor-pointer group
-                               ${selectedTicket?.id === task.id
-                              ? "bg-purple-500/10 border-purple-500/30"
-                              : "bg-transparent border-transparent hover:bg-white/5"
-                            }
-                            `}
-                        >
+                      tasks.map((task) => (
+                        <div key={task.id} onClick={() => setSelectedTicket(task)} className={`flex items-center justify-between p-3.5 rounded-xl border transition-all cursor-pointer group ${selectedTicket?.id === task.id ? "bg-purple-500/10 border-purple-500/30" : "bg-transparent border-transparent hover:bg-white/5"}`}>
                           <div className="flex items-center gap-4">
-                            <div
-                              className={`font-mono font-bold text-lg ${task.priority === "Critical"
-                                  ? "text-red-400"
-                                  : "text-purple-300"
-                                }`}
-                            >
-                              {task.score}
-                            </div>
+                            <div className={`font-mono font-bold text-lg ${task.priority === "Critical" ? "text-red-400" : "text-purple-300"}`}>{task.score}</div>
                             <div>
-                              <div className="text-sm font-medium text-white">
-                                {task.title}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                {task.zone}
-                              </div>
+                              <div className="text-sm font-medium text-white">{task.title}</div>
+                              <div className="text-xs text-gray-500">{task.zone}</div>
                             </div>
                           </div>
-                          <span
-                            className={`text-[10px] font-bold uppercase px-2 py-1 rounded-md ${getPriorityStyles(
-                              task.priority
-                            )}`}
-                          >
-                            {task.priority}
-                          </span>
+                          <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-md ${getPriorityStyles(task.priority)}`}>{task.priority}</span>
                         </div>
                       ))
                     )}
                   </div>
                 </div>
+                
+                {/* Track Button */}
                 <Link href="/dashboard/track">
-                  <button className="group relative px-8 py-4 bg-white text-black font-bold rounded-xl hover:scale-[1.02] transition-transform shadow-[0_0_40px_rgba(255,255,255,0.3)]">
-                    <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl" />
-                    <span className="relative z-10 flex items-center gap-3">
-                      Track complaints <ArrowRight className="w-5 h-5" />
-                    </span>
-                  </button>
+                    <button className="group relative w-full px-8 py-3 bg-white text-black font-bold rounded-xl hover:scale-[1.01] transition-transform shadow-[0_0_40px_rgba(255,255,255,0.3)]">
+                        <span className="relative z-10 flex items-center justify-center gap-3">Track complaints <ArrowRight className="w-4 h-4" /></span>
+                    </button>
                 </Link>
               </div>
 
-              {/* RIGHT: AI PANEL - USING 'selectedTicket' or 'criticalTasks' */}
+              {/* RIGHT COLUMN (AI Details) - UPDATED (High Visibility Badges) */}
               <div className="lg:col-span-4 flex flex-col h-full bg-[#0F0518]/90 backdrop-blur-xl border border-white/10 rounded-[32px] p-6 relative overflow-hidden">
                 <AnimatePresence mode="wait">
                   {selectedTicket ? (
-                    <motion.div
-                      key="details"
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
+                    <motion.div 
+                      key="details" 
+                      initial={{ opacity: 0, x: 20 }} 
+                      animate={{ opacity: 1, x: 0 }} 
+                      exit={{ opacity: 0, x: 20 }} 
                       className="flex-1 flex flex-col relative z-10 overflow-hidden"
                     >
-                      <h3 className="text-2xl font-bold text-white mb-6 leading-tight">
+                      {/* HEADER BADGES - UPDATED FOR VISIBILITY */}
+                      <div className="flex flex-wrap items-center gap-3 mb-6">
+                        {/* Severity Badge */}
+                        <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border shadow-[0_0_15px_rgba(0,0,0,0.3)] backdrop-blur-md ${
+                          selectedTicket.priority === 'Critical' ? 'bg-red-500/20 border-red-500/50 text-red-100 shadow-red-500/10' :
+                          selectedTicket.priority === 'High' ? 'bg-orange-500/20 border-orange-500/50 text-orange-100 shadow-orange-500/10' :
+                          selectedTicket.priority === 'Medium' ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-100' :
+                          'bg-purple-500/20 border-purple-500/50 text-purple-100'
+                        }`}>
+                          <ShieldAlert className="w-4 h-4" />
+                          <span className="font-bold text-sm tracking-wide uppercase">{selectedTicket.priority} SEVERITY</span>
+                        </div>
+
+                        {/* Department Badge */}
+                        {selectedTicket.department && (
+                          <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/20 border border-blue-400/30 text-blue-100 shadow-lg shadow-blue-500/10 backdrop-blur-md">
+                            <Building2 className="w-4 h-4" />
+                            <span className="font-bold text-sm">{selectedTicket.department}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <h3 className="text-2xl font-bold text-white mb-6 leading-snug break-words tracking-tight">
                         {selectedTicket.title}
                       </h3>
-                      <div className="p-5 bg-[#05020A] rounded-2xl border border-white/5 mb-6 shadow-inner">
-                        <h4 className="text-xs font-bold text-purple-400 uppercase mb-4 flex items-center gap-2">
-                          <Zap className="w-3 h-3" /> AI Analysis
-                        </h4>
-                        <p className="text-gray-300 text-sm leading-relaxed">
-                          {selectedTicket.fullAnalysis}
-                        </p>
+
+                      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4">
+                          <div className="p-5 bg-[#05020A] rounded-2xl border border-white/10 shadow-inner">
+                            <h4 className="text-xs font-bold text-gray-400 uppercase mb-3 flex items-center gap-2">
+                              <AlertTriangle className="w-4 h-4 text-gray-300" /> Context & Explanation
+                            </h4>
+                            <p className="text-gray-200 text-base leading-relaxed">
+                              {selectedTicket.explanation || "No explanation provided."}
+                            </p>
+                          </div>
+
+                          <div className="p-5 bg-gradient-to-br from-purple-600/20 to-indigo-600/10 rounded-2xl border border-purple-500/30 shadow-lg">
+                            <h4 className="text-xs font-bold text-purple-200 uppercase mb-3 flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-purple-300" /> Recommended Resolution
+                            </h4>
+                            <p className="text-white text-base leading-relaxed font-medium">
+                              {selectedTicket.resolution || "No resolution provided."}
+                            </p>
+                          </div>
                       </div>
-                      <button
-                        onClick={() => setSelectedTicket(null)}
-                        className="mt-auto w-full py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-colors"
-                      >
-                        Back to Feed
+
+                      <button onClick={() => setSelectedTicket(null)} className="mt-6 w-full py-4 bg-white text-black font-bold rounded-xl hover:bg-gray-200 transition-colors text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)]">
+                        Close Analysis
                       </button>
                     </motion.div>
                   ) : (
-                    // DEFAULT VIEW (Critical Feed)
-                    <motion.div
-                      key="alert-list"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="flex-1 flex flex-col relative z-10 overflow-hidden"
-                    >
+                    <motion.div key="alert-list" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col relative z-10 overflow-hidden">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
                           <ShieldAlert className="w-5 h-5 text-red-500" />
-                          <span className="text-red-400 font-bold tracking-widest text-xs uppercase">
-                            Threat Level: Critical
-                          </span>
+                          <span className="text-red-400 font-bold tracking-widest text-xs uppercase">Threat Level: Critical</span>
                         </div>
-                        <span className="bg-red-500/10 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded border border-red-500/20">
-                          {criticalTasks.length} Issues
-                        </span>
                       </div>
-
-                      {criticalTasks.length === 0 && (
-                        <p className="text-gray-500 text-sm italic">
-                          No critical threats detected.
-                        </p>
+                      {criticalTasks.length === 0 ? (
+                        <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50">
+                            <CheckCircle2 className="w-12 h-12 mb-2 text-emerald-500" />
+                            <p>All clear.</p>
+                        </div>
+                      ) : (
+                        <div className="overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                            <p className="text-xs text-gray-500 mb-2">Select a task on the left to view AI resolution plan.</p>
+                          {criticalTasks.map((task) => (
+                            <div key={task.id} onClick={() => setSelectedTicket(task)} className="p-4 bg-gradient-to-br from-red-500/10 to-transparent border border-red-500/20 rounded-2xl hover:bg-red-500/20 cursor-pointer transition-colors group">
+                              <div className="text-white text-sm font-bold mb-1 group-hover:text-red-200 transition-colors">{task.title}</div>
+                              <div className="flex justify-between items-center">
+                                <div className="text-red-300 text-xs font-medium">{task.zone}</div>
+                                <ArrowRight className="w-4 h-4 text-red-400 -rotate-45 group-hover:translate-x-1 transition-transform" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       )}
-
-                      <div className="overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-                        {criticalTasks.map((task) => (
-                          <div
-                            key={task.id}
-                            className="p-5 bg-gradient-to-br from-red-500/10 to-transparent border border-red-500/20 rounded-2xl"
-                          >
-                            <div className="text-white text-lg font-bold">
-                              {task.title}
-                            </div>
-                            <div className="text-red-300/70 text-xs mb-3">
-                              {task.zone}
-                            </div>
-                            <button
-                              onClick={() => setSelectedTicket(task)}
-                              className="text-xs text-red-400 underline flex items-center gap-1 hover:text-red-300 transition-colors"
-                            >
-                              View Analysis <ArrowRight className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
-
-
               </div>
             </div>
           </div>

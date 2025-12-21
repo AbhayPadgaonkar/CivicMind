@@ -6,3 +6,4 @@ venv/
 myenv/
 node_modules/
 firebase_key/
+.venv

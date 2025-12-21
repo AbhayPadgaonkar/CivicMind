@@ -29,19 +29,20 @@ const LeafletMap = ({ data }: { data: any[] }) => {
 
   return (
     <MapContainer 
-      key={JSON.stringify(center)} // Force re-render when center changes
+      key={JSON.stringify(center)} 
       center={center} 
       zoom={11} 
-      style={{ height: "100%", width: "100%", background: "#05020A" }} 
+      // 1. Changed background to white for light theme integration
+      style={{ height: "100%", width: "100%", background: "#ffffff" }} 
       zoomControl={false}
     >
+      {/* 2. Changed TileLayer URL to Carto Light (Positron) */}
       <TileLayer
         attribution='&copy; CARTO'
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
       />
       
       {data.map((item, i) => {
-        // Skip items without coordinates
         if (!item.coords) return null;
 
         const color = getColor(item.priority);
@@ -56,7 +57,7 @@ const LeafletMap = ({ data }: { data: any[] }) => {
               fillOpacity: 0.2, 
               weight: 1
             }}
-            radius={item.score / 2} // Size based on Risk Score
+            radius={item.score / 2} 
             className={item.priority === "Critical" ? "animate-pulse" : ""}
           >
             <Popup className="glass-popup text-black font-bold">
@@ -73,11 +74,11 @@ const LeafletMap = ({ data }: { data: any[] }) => {
               pathOptions={{ color: color, weight: 2, fillOpacity: 0 }}
             />
 
-            {/* Center Dot */}
+            {/* 3. Changed Center Dot to solid color so it stands out on light map */}
             <CircleMarker 
               center={item.coords} 
               radius={3} 
-              pathOptions={{ color: "#fff", fillColor: "#fff", fillOpacity: 1 }}
+              pathOptions={{ color: color, fillColor: color, fillOpacity: 1 }}
             />
           </CircleMarker>
         )
